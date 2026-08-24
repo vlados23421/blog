@@ -1,10 +1,12 @@
 import asyncio
 import logging
+import os
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiohttp import web
 from config import BOT_TOKEN, ADMIN_ID, REFERRAL_BONUS
 from database import db
 
@@ -390,11 +392,39 @@ async def admin_panel(message: types.Message):
     
     await message.answer(text, parse_mode="Markdown")
 
-# ==================== ЗАПУСК ====================
+# ==================== ЗАПУСК С ВЕБ-СЕРВЕРОМ ====================
 
-async def main():
+async def health_check(request):
+    """Эндпоинт для проверки работоспособности"""
+    return web.Response(text="OK")
+
+async def run_bot():
+    """Запуск бота в фоновом режиме"""
     logging.info("🚀 Бот запущен!")
     await dp.start_polling(bot)
+
+async def main():
+    # Получаем порт от Render
+    port = int(os.environ.get("PORT", 8080))
+    
+    # Создаем веб-приложение
+    app = web.Application()
+    app.router.add_get('/health', health_check)
+    
+    # Запускаем бота в фоновом режиме
+    loop = asyncio.get_event_loop()
+    task = loop.create_task(run_bot())
+    
+    # Запускаем веб-сервер
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    
+    logging.info(f"✅ Веб-сервер запущен на порту {port}")
+    
+    # Держим сервер активным
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
     asyncio.run(main())
