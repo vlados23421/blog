@@ -130,7 +130,7 @@ def category_menu():
         ]
     )
 
-def channel_menu(channel_id, user_id):
+def channel_menu(channel_id):
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -191,6 +191,23 @@ def premium_menu():
         ]
     )
 
+def edit_channel_menu(channel_id):
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="✏️ Название", callback_data=f"edit_name_{channel_id}"),
+                InlineKeyboardButton(text="📂 Категория", callback_data=f"edit_category_{channel_id}")
+            ],
+            [
+                InlineKeyboardButton(text="👥 Подписчики", callback_data=f"edit_subscribers_{channel_id}"),
+                InlineKeyboardButton(text="📄 Описание", callback_data=f"edit_description_{channel_id}")
+            ],
+            [
+                InlineKeyboardButton(text="🔙 Назад", callback_data=f"channel_back_{channel_id}")
+            ]
+        ]
+    )
+
 # ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 
 def extract_channel_username(link):
@@ -219,20 +236,6 @@ async def check_bot_in_channel(channel_username):
 
 def is_admin(user_id):
     return user_id == ADMIN_ID
-
-async def log_admin_action(user_id, action, details=""):
-    logging.info(f"🔐 АДМИН: {user_id} -> {action} | {details}")
-    try:
-        await bot.send_message(
-            ADMIN_ID,
-            f"📋 **Лог действия**\n\n"
-            f"👤 Админ: @{user_id}\n"
-            f"⚡ Действие: {action}\n"
-            f"📝 Детали: {details}\n"
-            f"🕐 Время: {datetime.now().strftime('%H:%M:%S')}"
-        )
-    except:
-        pass
 
 # ==================== ОБРАБОТЧИКИ ====================
 
@@ -747,6 +750,252 @@ async def channel_description(message: types.Message, state: FSMContext):
     )
     await state.clear()
 
+# ==================== РЕДАКТИРОВАНИЕ КАНАЛА ====================
+
+@dp.callback_query(F.data.startswith("edit_channel_"))
+async def edit_channel_start(callback: types.CallbackQuery, state: FSMContext):
+    if not check_flood(callback.from_user.id):
+        await callback.answer("⏳ Подождите немного!", show_alert=True)
+        return
+    
+    channel_id = int(callback.data.split("_")[2])
+    channel = db.get_channel_by_id(channel_id)
+    
+    if not channel:
+        await callback.answer("❌ Канал не найден", show_alert=True)
+        return
+    
+    if channel[1] != callback.from_user.id:
+        await callback.answer("⛔ Это не ваш канал!", show_alert=True)
+        return
+    
+    await callback.message.edit_text(
+        f"✏️ **Редактирование канала**\n\n"
+        f"📝 Название: {channel[2]}\n"
+        f"📂 Категория: {channel[4]}\n"
+        f"👥 Подписчиков: {channel[5]}\n"
+        f"📄 Описание: {channel[6] or 'Нет'}\n\n"
+        "Выбери что изменить:",
+        parse_mode="Markdown",
+        reply_markup=edit_channel_menu(channel_id)
+    )
+    await callback.answer()
+
+@dp.callback_query(F.data == "channel_back_")
+async def channel_back(callback: types.CallbackQuery):
+    # Извлекаем channel_id из callback.data
+    channel_id = int(callback.data.split("_")[2])
+    channel = db.get_channel_by_id(channel_id)
+    
+    if not channel:
+        await callback.answer("❌ Канал не найден", show_alert=True)
+        return
+    
+    text = (
+        f"📢 **{channel[2]}**\n\n"
+        f"🔗 Ссылка: {channel[3]}\n"
+        f"📂 Категория: {channel[4]}\n"
+        f"👥 Подписчиков: {channel[5]}\n"
+        f"📄 Описание: {channel[6] or 'Нет описания'}\n\n"
+        f"👤 Владелец: @{callback.from_user.username or 'Неизвестно'}"
+    )
+    
+    await callback.message.edit_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=channel_menu(channel_id)
+    )
+    await callback.answer()
+
+# --- РЕДАКТИРОВАНИЕ НАЗВАНИЯ ---
+
+@dp.callback_query(F.data.startswith("edit_name_"))
+async def edit_name_start(callback: types.CallbackQuery, state: FSMContext):
+    channel_id = int(callback.data.split("_")[2])
+    await state.update_data(channel_id=channel_id, field="name")
+    await callback.message.edit_text(
+        "📝 **Введите новое название канала:**",
+        parse_mode="Markdown",
+        reply_markup=back_button()
+    )
+    await state.set_state(EditChannelState.waiting_name)
+    await callback.answer()
+
+@dp.message(EditChannelState.waiting_name)
+async def edit_name_save(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    channel_id = data.get('channel_id')
+    field = data.get('field')
+    
+    if not channel_id:
+        await message.answer("❌ Ошибка! Попробуйте снова.")
+        await state.clear()
+        return
+    
+    db.update_channel(channel_id, name=message.text)
+    await message.answer("✅ Название обновлено!", reply_markup=back_button())
+    await state.clear()
+
+# --- РЕДАКТИРОВАНИЕ КАТЕГОРИИ ---
+
+@dp.callback_query(F.data.startswith("edit_category_"))
+async def edit_category_start(callback: types.CallbackQuery, state: FSMContext):
+    channel_id = int(callback.data.split("_")[2])
+    await state.update_data(channel_id=channel_id, field="category")
+    await callback.message.edit_text(
+        "📂 **Выберите новую категорию:**",
+        parse_mode="Markdown",
+        reply_markup=category_menu()
+    )
+    await state.set_state(EditChannelState.waiting_category)
+    await callback.answer()
+
+@dp.callback_query(EditChannelState.waiting_category, F.data.startswith("cat_"))
+async def edit_category_save(callback: types.CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    channel_id = data.get('channel_id')
+    
+    if not channel_id:
+        await callback.answer("❌ Ошибка! Попробуйте снова.", show_alert=True)
+        await state.clear()
+        return
+    
+    category = callback.data.split("_")[1]
+    db.update_channel(channel_id, category=category)
+    await callback.message.edit_text("✅ Категория обновлена!", reply_markup=back_button())
+    await state.clear()
+    await callback.answer()
+
+# --- РЕДАКТИРОВАНИЕ ПОДПИСЧИКОВ ---
+
+@dp.callback_query(F.data.startswith("edit_subscribers_"))
+async def edit_subscribers_start(callback: types.CallbackQuery, state: FSMContext):
+    channel_id = int(callback.data.split("_")[2])
+    await state.update_data(channel_id=channel_id, field="subscribers")
+    await callback.message.edit_text(
+        "👥 **Введите новое количество подписчиков:**",
+        parse_mode="Markdown",
+        reply_markup=back_button()
+    )
+    await state.set_state(EditChannelState.waiting_subscribers)
+    await callback.answer()
+
+@dp.message(EditChannelState.waiting_subscribers)
+async def edit_subscribers_save(message: types.Message, state: FSMContext):
+    try:
+        subscribers = int(message.text)
+        if subscribers < 0:
+            raise ValueError
+    except:
+        await message.answer("❌ Введите положительное число!")
+        return
+    
+    data = await state.get_data()
+    channel_id = data.get('channel_id')
+    
+    if not channel_id:
+        await message.answer("❌ Ошибка! Попробуйте снова.")
+        await state.clear()
+        return
+    
+    db.update_channel(channel_id, subscribers=subscribers)
+    await message.answer("✅ Количество подписчиков обновлено!", reply_markup=back_button())
+    await state.clear()
+
+# --- РЕДАКТИРОВАНИЕ ОПИСАНИЯ ---
+
+@dp.callback_query(F.data.startswith("edit_description_"))
+async def edit_description_start(callback: types.CallbackQuery, state: FSMContext):
+    channel_id = int(callback.data.split("_")[2])
+    await state.update_data(channel_id=channel_id, field="description")
+    await callback.message.edit_text(
+        "📄 **Введите новое описание канала:**",
+        parse_mode="Markdown",
+        reply_markup=back_button()
+    )
+    await state.set_state(EditChannelState.waiting_description)
+    await callback.answer()
+
+@dp.message(EditChannelState.waiting_description)
+async def edit_description_save(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    channel_id = data.get('channel_id')
+    
+    if not channel_id:
+        await message.answer("❌ Ошибка! Попробуйте снова.")
+        await state.clear()
+        return
+    
+    db.update_channel(channel_id, description=message.text)
+    await message.answer("✅ Описание обновлено!", reply_markup=back_button())
+    await state.clear()
+
+# --- УДАЛЕНИЕ КАНАЛА ---
+
+@dp.callback_query(F.data.startswith("delete_channel_"))
+async def delete_channel(callback: types.CallbackQuery):
+    if not check_flood(callback.from_user.id):
+        await callback.answer("⏳ Подождите немного!", show_alert=True)
+        return
+    
+    channel_id = int(callback.data.split("_")[2])
+    channel = db.get_channel_by_id(channel_id)
+    
+    if not channel:
+        await callback.answer("❌ Канал не найден", show_alert=True)
+        return
+    
+    if channel[1] != callback.from_user.id:
+        await callback.answer("⛔ Это не ваш канал!", show_alert=True)
+        return
+    
+    db.delete_channel(channel_id)
+    
+    await callback.message.edit_text(
+        "🗑️ **Канал удалён из системы**",
+        reply_markup=back_button()
+    )
+    await callback.answer()
+
+# --- СТАТИСТИКА КАНАЛА ---
+
+@dp.callback_query(F.data.startswith("channel_stats_"))
+async def channel_stats(callback: types.CallbackQuery):
+    if not check_flood(callback.from_user.id):
+        await callback.answer("⏳ Подождите немного!", show_alert=True)
+        return
+    
+    channel_id = int(callback.data.split("_")[2])
+    channel = db.get_channel_by_id(channel_id)
+    
+    if not channel:
+        await callback.answer("❌ Канал не найден", show_alert=True)
+        return
+    
+    username = extract_channel_username(channel[3])
+    info = await get_channel_info(username) if username else None
+    
+    text = (
+        f"📊 **Статистика канала**\n\n"
+        f"📝 Название: {channel[2]}\n"
+        f"🔗 Ссылка: {channel[3]}\n"
+        f"📂 Категория: {channel[4]}\n"
+        f"👥 Подписчиков: {channel[5]}\n"
+        f"📄 Описание: {channel[6] or 'Нет'}\n\n"
+    )
+    
+    if info:
+        text += f"📊 **Из Telegram:**\n"
+        text += f"👥 Подписчиков: {info['members']}\n"
+        text += f"📄 Описание: {info['description']}"
+    
+    await callback.message.edit_text(
+        text,
+        parse_mode="Markdown",
+        reply_markup=channel_menu(channel_id)
+    )
+    await callback.answer()
+
 # ==================== ПОИСК ПАРТНЁРОВ ====================
 
 @dp.callback_query(F.data == "find_partners")
@@ -929,8 +1178,6 @@ async def admin_panel(callback: types.CallbackQuery):
         await callback.answer("⛔ Доступ запрещен", show_alert=True)
         return
     
-    await log_admin_action(callback.from_user.id, "Открыл админ-панель")
-    
     await callback.message.edit_text(
         "🔐 **Админ-панель**\n\n"
         "Управление платформой:",
@@ -1060,24 +1307,21 @@ async def admin_broadcast_menu(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data == "admin_premium")
 async def admin_premium(callback: types.CallbackQuery):
-    if not is_admin(callback.from_user.id):
+    if callback.from_user.id != ADMIN_ID:
         await callback.answer("⛔ Доступ запрещен", show_alert=True)
         return
     
     users = db.get_all_users()
-    premium_users = []
-    for user in users:
-        if user[7] == 1:
-            premium_users.append(user)
+    premium_users = [u for u in users if u[7] == 1]
     
     text = (
         "👑 **Управление премиум**\n\n"
         f"👥 Всего пользователей: {len(users)}\n"
         f"👑 Премиум-пользователей: {len(premium_users)}\n\n"
-        "📋 **Премиум-пользователи:**\n"
     )
     
     if premium_users:
+        text += "📋 **Премиум-пользователи:**\n"
         for user in premium_users[:10]:
             text += f"• @{user[1] or user[0]} — до {user[8]}\n"
         if len(premium_users) > 10:
@@ -1100,7 +1344,7 @@ async def admin_premium(callback: types.CallbackQuery):
 
 @dp.callback_query(F.data == "admin_settings")
 async def admin_settings(callback: types.CallbackQuery):
-    if not is_admin(callback.from_user.id):
+    if callback.from_user.id != ADMIN_ID:
         await callback.answer("⛔ Доступ запрещен", show_alert=True)
         return
     
@@ -1160,7 +1404,6 @@ async def block_user(message: types.Message):
             return
         
         db.block_user(user_id)
-        await log_admin_action(message.from_user.id, f"Заблокировал пользователя {user_id}", f"@{user[1]}")
         await message.answer(f"✅ Пользователь {user_id} заблокирован")
     except:
         await message.answer("❌ Использование: /block <user_id>")
@@ -1174,7 +1417,6 @@ async def unblock_user(message: types.Message):
     try:
         user_id = int(message.text.split()[1])
         db.unblock_user(user_id)
-        await log_admin_action(message.from_user.id, f"Разблокировал пользователя {user_id}")
         await message.answer(f"✅ Пользователь {user_id} разблокирован")
     except:
         await message.answer("❌ Использование: /unblock <user_id>")
@@ -1193,8 +1435,6 @@ async def broadcast(message: types.Message):
     users = db.get_all_users()
     success = 0
     failed = 0
-    
-    await log_admin_action(message.from_user.id, "Отправил рассылку", f"Текст: {text[:50]}...")
     
     status_msg = await message.answer("⏳ Отправляю рассылку...")
     
@@ -1221,7 +1461,7 @@ async def give_premium(message: types.Message):
     try:
         args = message.text.split()
         if len(args) < 3:
-            await message.answer("❌ Использование: /give_premium <user_id> <месяцы>")
+            await message.answer("❌ Использование: /give_premium <user_id> <месяцы>\nПример: /give_premium 8718572838 3")
             return
         
         user_id = int(args[1])
@@ -1233,7 +1473,6 @@ async def give_premium(message: types.Message):
             return
         
         db.set_premium(user_id, months)
-        await log_admin_action(message.from_user.id, f"Выдал премиум пользователю {user_id}", f"{months} месяцев")
         
         await message.answer(f"✅ Пользователю @{user[1] or user_id} выдан премиум на {months} месяцев")
         
@@ -1254,7 +1493,12 @@ async def remove_premium(message: types.Message):
         return
     
     try:
-        user_id = int(message.text.split()[1])
+        args = message.text.split()
+        if len(args) < 2:
+            await message.answer("❌ Использование: /remove_premium <user_id>\nПример: /remove_premium 8718572838")
+            return
+        
+        user_id = int(args[1])
         user = db.get_user(user_id)
         if not user:
             await message.answer("❌ Пользователь не найден")
@@ -1262,8 +1506,6 @@ async def remove_premium(message: types.Message):
         
         db.cursor.execute("UPDATE users SET is_premium = 0, premium_until = NULL WHERE user_id = ?", (user_id,))
         db.conn.commit()
-        
-        await log_admin_action(message.from_user.id, f"Забрал премиум у пользователя {user_id}")
         
         await message.answer(f"✅ Премиум отозван у @{user[1] or user_id}")
         
@@ -1292,7 +1534,6 @@ async def set_bonus(message: types.Message):
         db.cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", ("referral_bonus", str(bonus)))
         db.conn.commit()
         
-        await log_admin_action(message.from_user.id, f"Изменил бонус за реферала на {bonus}")
         await message.answer(f"✅ Бонус за реферала изменён на {bonus} монет")
         
     except:
@@ -1314,7 +1555,6 @@ async def set_channel_limit(message: types.Message):
         db.cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", ("channel_limit", str(limit)))
         db.conn.commit()
         
-        await log_admin_action(message.from_user.id, f"Изменил лимит каналов на {limit}")
         await message.answer(f"✅ Лимит каналов изменён на {limit}")
         
     except:
@@ -1340,7 +1580,6 @@ async def set_premium_price(message: types.Message):
                          (f"premium_price_{months}", str(price)))
         db.conn.commit()
         
-        await log_admin_action(message.from_user.id, f"Изменил цену премиума ({months} месяцев) на {price}")
         await message.answer(f"✅ Цена премиума на {months} месяцев изменена на {price} монет")
         
     except:
