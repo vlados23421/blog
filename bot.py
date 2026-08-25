@@ -22,7 +22,6 @@ dp = Dispatcher()
 user_requests = defaultdict(list)
 
 def check_flood(user_id, limit=5, seconds=10):
-    """Проверка на флуд (максимум 5 запросов за 10 секунд)"""
     now = datetime.now()
     user_requests[user_id] = [t for t in user_requests[user_id] if (now - t).seconds < seconds]
     if len(user_requests[user_id]) >= limit:
@@ -45,15 +44,9 @@ class EditChannelState(StatesGroup):
     waiting_subscribers = State()
     waiting_description = State()
 
-class AdminState(StatesGroup):
-    waiting_broadcast = State()
-    waiting_block_reason = State()
-
 # ==================== КЛАВИАТУРЫ ====================
 
 def main_menu(is_admin=False):
-    """Главное меню с кнопками в ряд + админ-меню"""
-    
     keyboard = [
         [
             InlineKeyboardButton(text="📖 Как это работает", callback_data="instruction"),
@@ -85,7 +78,6 @@ def main_menu(is_admin=False):
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
 def admin_menu():
-    """Админ-меню с функциями"""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -101,8 +93,8 @@ def admin_menu():
                 InlineKeyboardButton(text="📥 Экспорт", callback_data="admin_export")
             ],
             [
-                InlineKeyboardButton(text="👑 Премиум (в разработке)", callback_data="admin_premium_dev"),
-                InlineKeyboardButton(text="⚙️ Настройки (в разработке)", callback_data="admin_settings_dev")
+                InlineKeyboardButton(text="👑 Управление премиум", callback_data="admin_premium"),
+                InlineKeyboardButton(text="⚙️ Настройки", callback_data="admin_settings")
             ],
             [
                 InlineKeyboardButton(text="🔙 Главное меню", callback_data="back")
@@ -202,8 +194,6 @@ def premium_menu():
 # ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 
 def extract_channel_username(link):
-    """Извлекает username из ссылки с проверкой"""
-    # Проверяем на опасные символы
     if re.search(r'[<>"\'/\\]', link):
         return None
     
@@ -219,7 +209,6 @@ def extract_channel_username(link):
     return None
 
 async def check_bot_in_channel(channel_username):
-    """Проверяет, добавлен ли бот в канал"""
     try:
         chat = await bot.get_chat(f"@{channel_username}")
         member = await bot.get_chat_member(f"@{channel_username}", bot.id)
@@ -232,10 +221,7 @@ def is_admin(user_id):
     return user_id == ADMIN_ID
 
 async def log_admin_action(user_id, action, details=""):
-    """Логирование действий админа"""
     logging.info(f"🔐 АДМИН: {user_id} -> {action} | {details}")
-    
-    # Отправляем уведомление в лог-канал (если есть)
     try:
         await bot.send_message(
             ADMIN_ID,
@@ -256,7 +242,6 @@ async def start_command(message: types.Message):
     username = message.from_user.username
     first_name = message.from_user.first_name
     
-    # Анти-флуд
     if not check_flood(user_id):
         await message.answer("⏳ Слишком много запросов! Подождите немного.")
         return
@@ -267,7 +252,6 @@ async def start_command(message: types.Message):
     if not db.get_user(user_id):
         db.add_user(user_id, username, first_name, referrer_code, REFERRAL_BONUS)
         
-        # Проверка на админа
         if is_admin(user_id):
             await message.answer(
                 f"👑 **Добро пожаловать, Админ!**\n\n"
@@ -289,7 +273,6 @@ async def start_command(message: types.Message):
         user = db.get_user(user_id)
         channels = db.get_user_channels(user_id)
         
-        # Проверка на админа
         if is_admin(user_id):
             await message.answer(
                 f"👑 **С возвращением, Админ!**\n\n"
@@ -376,6 +359,7 @@ async def profile(callback: types.CallbackQuery):
         return
     
     channels = db.get_user_channels(callback.from_user.id)
+    is_premium = db.is_premium(callback.from_user.id)
     
     text = (
         f"👤 **Мой профиль**\n\n"
@@ -384,6 +368,7 @@ async def profile(callback: types.CallbackQuery):
         f"👥 Рефералов: {user[5]}\n"
         f"💰 Бонусов: {user[6]} монет\n"
         f"📢 Каналов: {len(channels)}\n"
+        f"👑 Премиум: {'✅ Да' if is_premium else '❌ Нет'}\n"
         f"📅 Регистрация: {user[7]}\n"
     )
     
@@ -546,7 +531,6 @@ async def buy_premium(callback: types.CallbackQuery):
         await callback.answer(f"❌ Недостаточно монет! Нужно {price}, у вас {user[6]}", show_alert=True)
         return
     
-    # Списываем монеты
     db.cursor.execute("UPDATE users SET bonus_balance = bonus_balance - ? WHERE user_id = ?", (price, user_id))
     db.set_premium(user_id, months)
     db.conn.commit()
@@ -617,7 +601,6 @@ async def add_channel_start(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer("⏳ Подождите немного!", show_alert=True)
         return
     
-    # Проверяем лимит каналов (максимум 5)
     channels = db.get_user_channels(callback.from_user.id)
     is_premium = db.is_premium(callback.from_user.id)
     
@@ -649,7 +632,6 @@ async def channel_link(message: types.Message, state: FSMContext):
     
     link = message.text.strip()
     
-    # Валидация ссылки
     username = extract_channel_username(link)
     if not username:
         await message.answer(
@@ -659,7 +641,6 @@ async def channel_link(message: types.Message, state: FSMContext):
         )
         return
     
-    # Проверка на опасные символы
     if re.search(r'[<>"\'/\\]', link):
         await message.answer("❌ Ссылка содержит недопустимые символы!")
         return
@@ -1075,45 +1056,71 @@ async def admin_broadcast_menu(callback: types.CallbackQuery):
     )
     await callback.answer()
 
-# ==================== АДМИН: ПРЕМИУМ (В РАЗРАБОТКЕ) ====================
+# ==================== АДМИН: УПРАВЛЕНИЕ ПРЕМИУМ ====================
 
-@dp.callback_query(F.data == "admin_premium_dev")
-async def admin_premium_dev(callback: types.CallbackQuery):
+@dp.callback_query(F.data == "admin_premium")
+async def admin_premium(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен", show_alert=True)
         return
     
+    users = db.get_all_users()
+    premium_users = []
+    for user in users:
+        if user[7] == 1:
+            premium_users.append(user)
+    
+    text = (
+        "👑 **Управление премиум**\n\n"
+        f"👥 Всего пользователей: {len(users)}\n"
+        f"👑 Премиум-пользователей: {len(premium_users)}\n\n"
+        "📋 **Премиум-пользователи:**\n"
+    )
+    
+    if premium_users:
+        for user in premium_users[:10]:
+            text += f"• @{user[1] or user[0]} — до {user[8]}\n"
+        if len(premium_users) > 10:
+            text += f"... и ещё {len(premium_users) - 10}\n"
+    else:
+        text += "❌ Пока нет премиум-пользователей\n"
+    
+    text += "\n💡 **Команды:**\n"
+    text += "/give_premium <user_id> <месяцы> — выдать премиум\n"
+    text += "/remove_premium <user_id> — забрать премиум"
+    
     await callback.message.edit_text(
-        "👑 **Премиум-управление**\n\n"
-        "🚧 **В разработке!**\n\n"
-        "Здесь будет:\n"
-        "• Управление премиум-пользователями\n"
-        "• Назначение премиума\n"
-        "• Настройка цен\n"
-        "• Статистика премиум-пользователей\n\n"
-        "⏳ Ожидайте обновления!",
+        text,
         parse_mode="Markdown",
         reply_markup=back_button()
     )
     await callback.answer()
 
-# ==================== АДМИН: НАСТРОЙКИ (В РАЗРАБОТКЕ) ====================
+# ==================== АДМИН: НАСТРОЙКИ ====================
 
-@dp.callback_query(F.data == "admin_settings_dev")
-async def admin_settings_dev(callback: types.CallbackQuery):
+@dp.callback_query(F.data == "admin_settings")
+async def admin_settings(callback: types.CallbackQuery):
     if not is_admin(callback.from_user.id):
         await callback.answer("⛔ Доступ запрещен", show_alert=True)
         return
     
-    await callback.message.edit_text(
+    stats = db.get_stats()
+    
+    text = (
         "⚙️ **Настройки платформы**\n\n"
-        "🚧 **В разработке!**\n\n"
-        "Здесь будет:\n"
-        "• Настройка бонусов\n"
-        "• Настройка лимитов\n"
-        "• Управление категориями\n"
-        "• Системные настройки\n\n"
-        "⏳ Ожидайте обновления!",
+        "📊 **Текущие параметры:**\n"
+        f"👥 Всего пользователей: {stats['total_users']}\n"
+        f"📢 Всего каналов: {stats['total_channels']}\n"
+        f"💰 Всего бонусов: {stats['total_bonus']}\n"
+        f"👑 Премиум: {stats['total_premium']}\n\n"
+        "💡 **Команды для настройки:**\n"
+        "/set_bonus <количество> — изменить бонус за реферала\n"
+        "/set_channel_limit <количество> — изменить лимит каналов\n"
+        "/set_premium_price <месяцы> <цена> — изменить цену премиума"
+    )
+    
+    await callback.message.edit_text(
+        text,
         parse_mode="Markdown",
         reply_markup=back_button()
     )
@@ -1131,8 +1138,7 @@ async def admin_export_menu(callback: types.CallbackQuery):
         "📥 **Экспорт данных**\n\n"
         "Команды для экспорта:\n"
         "/export_users — экспорт пользователей\n"
-        "/export_channels — экспорт каналов\n"
-        "/export_referrals — экспорт рефералов",
+        "/export_channels — экспорт каналов",
         parse_mode="Markdown",
         reply_markup=back_button()
     )
@@ -1205,6 +1211,140 @@ async def broadcast(message: types.Message):
         f"📤 Отправлено: {success}\n"
         f"❌ Не доставлено: {failed}"
     )
+
+@dp.message(Command("give_premium"))
+async def give_premium(message: types.Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Доступ запрещен")
+        return
+    
+    try:
+        args = message.text.split()
+        if len(args) < 3:
+            await message.answer("❌ Использование: /give_premium <user_id> <месяцы>")
+            return
+        
+        user_id = int(args[1])
+        months = int(args[2])
+        
+        user = db.get_user(user_id)
+        if not user:
+            await message.answer("❌ Пользователь не найден")
+            return
+        
+        db.set_premium(user_id, months)
+        await log_admin_action(message.from_user.id, f"Выдал премиум пользователю {user_id}", f"{months} месяцев")
+        
+        await message.answer(f"✅ Пользователю @{user[1] or user_id} выдан премиум на {months} месяцев")
+        
+        await bot.send_message(
+            user_id,
+            f"👑 **Вам выдан Премиум-доступ!**\n\n"
+            f"📅 На {months} месяцев\n"
+            f"🎉 Теперь у вас есть доступ ко всем преимуществам!"
+        )
+        
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+
+@dp.message(Command("remove_premium"))
+async def remove_premium(message: types.Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Доступ запрещен")
+        return
+    
+    try:
+        user_id = int(message.text.split()[1])
+        user = db.get_user(user_id)
+        if not user:
+            await message.answer("❌ Пользователь не найден")
+            return
+        
+        db.cursor.execute("UPDATE users SET is_premium = 0, premium_until = NULL WHERE user_id = ?", (user_id,))
+        db.conn.commit()
+        
+        await log_admin_action(message.from_user.id, f"Забрал премиум у пользователя {user_id}")
+        
+        await message.answer(f"✅ Премиум отозван у @{user[1] or user_id}")
+        
+        await bot.send_message(
+            user_id,
+            "❌ **Премиум-доступ отозван**\n\n"
+            "Если у вас есть вопросы, обратитесь к администратору @ycipo"
+        )
+        
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {e}")
+
+@dp.message(Command("set_bonus"))
+async def set_bonus(message: types.Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Доступ запрещен")
+        return
+    
+    try:
+        bonus = int(message.text.split()[1])
+        if bonus < 1:
+            await message.answer("❌ Бонус должен быть больше 0")
+            return
+        
+        db.cursor.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
+        db.cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", ("referral_bonus", str(bonus)))
+        db.conn.commit()
+        
+        await log_admin_action(message.from_user.id, f"Изменил бонус за реферала на {bonus}")
+        await message.answer(f"✅ Бонус за реферала изменён на {bonus} монет")
+        
+    except:
+        await message.answer("❌ Использование: /set_bonus <количество>")
+
+@dp.message(Command("set_channel_limit"))
+async def set_channel_limit(message: types.Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Доступ запрещен")
+        return
+    
+    try:
+        limit = int(message.text.split()[1])
+        if limit < 1:
+            await message.answer("❌ Лимит должен быть больше 0")
+            return
+        
+        db.cursor.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
+        db.cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", ("channel_limit", str(limit)))
+        db.conn.commit()
+        
+        await log_admin_action(message.from_user.id, f"Изменил лимит каналов на {limit}")
+        await message.answer(f"✅ Лимит каналов изменён на {limit}")
+        
+    except:
+        await message.answer("❌ Использование: /set_channel_limit <количество>")
+
+@dp.message(Command("set_premium_price"))
+async def set_premium_price(message: types.Message):
+    if not is_admin(message.from_user.id):
+        await message.answer("⛔ Доступ запрещен")
+        return
+    
+    try:
+        args = message.text.split()
+        if len(args) < 3:
+            await message.answer("❌ Использование: /set_premium_price <месяцы> <цена>")
+            return
+        
+        months = int(args[1])
+        price = int(args[2])
+        
+        db.cursor.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
+        db.cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", 
+                         (f"premium_price_{months}", str(price)))
+        db.conn.commit()
+        
+        await log_admin_action(message.from_user.id, f"Изменил цену премиума ({months} месяцев) на {price}")
+        await message.answer(f"✅ Цена премиума на {months} месяцев изменена на {price} монет")
+        
+    except:
+        await message.answer("❌ Использование: /set_premium_price <месяцы> <цена>")
 
 @dp.message(Command("export_users"))
 async def export_users(message: types.Message):
