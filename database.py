@@ -10,7 +10,6 @@ class Database:
         self.create_tables()
     
     def create_tables(self):
-        # Таблица пользователей
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS users (
                 user_id INTEGER PRIMARY KEY,
@@ -28,7 +27,6 @@ class Database:
             )
         """)
         
-        # Таблица рефералов
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS referrals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,7 +37,6 @@ class Database:
             )
         """)
         
-        # Таблица каналов
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS channels (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,7 +52,6 @@ class Database:
             )
         """)
         
-        # Таблица избранного
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS favorites (
                 user_id INTEGER,
@@ -65,7 +61,6 @@ class Database:
             )
         """)
         
-        # Таблица партнёрств
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS partnerships (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,7 +72,6 @@ class Database:
             )
         """)
         
-        # Таблица отзывов
         self.cursor.execute("""
             CREATE TABLE IF NOT EXISTS reviews (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -88,9 +82,14 @@ class Database:
             )
         """)
         
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
+        
         self.conn.commit()
-    
-    # ==================== ГЕНЕРАЦИЯ КОДА ====================
     
     def generate_referral_code(self, length=8):
         chars = string.ascii_uppercase + string.digits
@@ -99,8 +98,6 @@ class Database:
             self.cursor.execute("SELECT user_id FROM users WHERE referral_code = ?", (code,))
             if not self.cursor.fetchone():
                 return code
-    
-    # ==================== ПОЛЬЗОВАТЕЛИ ====================
     
     def add_user(self, user_id, username, first_name, referrer_code=None, bonus=10):
         self.cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
@@ -163,8 +160,6 @@ class Database:
         result = self.cursor.fetchone()
         return result[0] if result else 1
     
-    # ==================== БЛОКИРОВКА ====================
-    
     def is_user_blocked(self, user_id):
         self.cursor.execute("SELECT is_blocked FROM users WHERE user_id = ?", (user_id,))
         result = self.cursor.fetchone()
@@ -177,8 +172,6 @@ class Database:
     def unblock_user(self, user_id):
         self.cursor.execute("UPDATE users SET is_blocked = 0 WHERE user_id = ?", (user_id,))
         self.conn.commit()
-    
-    # ==================== РЕФЕРАЛЫ ====================
     
     def get_referrals(self, user_id):
         self.cursor.execute("""
@@ -205,8 +198,6 @@ class Database:
         """, (limit,))
         return self.cursor.fetchall()
     
-    # ==================== ПРЕМИУМ ====================
-    
     def set_premium(self, user_id, months):
         until = (datetime.now() + timedelta(days=months*30)).isoformat()
         self.cursor.execute(
@@ -226,8 +217,6 @@ class Database:
         if result[0] == 1 and result[1] and datetime.now().isoformat() < result[1]:
             return True
         return False
-    
-    # ==================== КАНАЛЫ ====================
     
     def add_channel(self, user_id, channel_name, channel_link, category, subscribers, description=""):
         self.cursor.execute("""
@@ -278,8 +267,6 @@ class Database:
         self.cursor.execute("UPDATE channels SET is_active = 0 WHERE id = ?", (channel_id,))
         self.conn.commit()
     
-    # ==================== ИЗБРАННОЕ ====================
-    
     def add_favorite(self, user_id, channel_id):
         try:
             self.cursor.execute(
@@ -313,8 +300,6 @@ class Database:
         )
         return self.cursor.fetchone() is not None
     
-    # ==================== ПАРТНЁРСТВА ====================
-    
     def add_partnership(self, channel1_id, channel2_id):
         self.cursor.execute("""
             INSERT INTO partnerships (channel1_id, channel2_id, status)
@@ -339,8 +324,6 @@ class Database:
         """, (status, partnership_id))
         self.conn.commit()
     
-    # ==================== ОТЗЫВЫ ====================
-    
     def add_review(self, user_id, rating, comment=""):
         self.cursor.execute(
             "INSERT INTO reviews (user_id, rating, comment) VALUES (?, ?, ?)",
@@ -360,8 +343,6 @@ class Database:
         self.cursor.execute("SELECT AVG(rating) FROM reviews")
         result = self.cursor.fetchone()
         return round(result[0], 1) if result and result[0] else 0
-    
-    # ==================== СТАТИСТИКА ====================
     
     def get_stats(self):
         self.cursor.execute("SELECT COUNT(*) FROM users")
@@ -390,5 +371,4 @@ class Database:
     def close(self):
         self.conn.close()
 
-# ✅ СОЗДАЁМ ЭКЗЕМПЛЯР БАЗЫ ДАННЫХ (только здесь, без импорта из себя)
 db = Database()
